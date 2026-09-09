@@ -243,7 +243,6 @@ def upgrade_skill(message):
 
     if change > 0:
         state["skill_points_remaining"] -= cost
-    # Если уменьшаем навык — очки не возвращаются (упрощённая механика)
 
     state["skills"][skill] = new_val
 
@@ -252,8 +251,16 @@ def upgrade_skill(message):
         f"Осталось очков прокачки: {state['skill_points_remaining']}\n\n"
         f"Текущие навыки: {', '.join([f'{k}: {v}' for k, v in state['skills'].items()])}"
     )
+
+    # АВТОСЦЕНА, если прокачка последняя
+    if state["skill_points_remaining"] == 0:
+        reply += "\n\n✨ Очки распределены! Ты чувствуешь, как магия наполняет тебя, и решаешь двинуться дальше…"
+        scene = generate_scene(state)
+        reply += "\n" + scene
+
     send_long_message(chat_id, reply)
     save_chat(chat_id)
+
 
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
