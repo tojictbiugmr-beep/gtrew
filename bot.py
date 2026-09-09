@@ -3,7 +3,7 @@ import os
 import random
 from openai import OpenAI
 
-# === КЛЮЧИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ BOTHOST ===
+# === КЛЮЧИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -14,7 +14,8 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-MODEL = "llama3-8b-8192"
+# === АКТУАЛЬНАЯ МОДЕЛЬ (не декомиссирована) ===
+MODEL = "openai/gpt-oss-20b"
 
 # === СОСТОЯНИЕ ИГРОКОВ ===
 player_state = {}
@@ -28,6 +29,20 @@ def get_state(chat_id):
             "steps": 0
         }
     return player_state[chat_id]
+
+# === ОТПРАВКА ДЛИННЫХ СООБЩЕНИЙ ПО ЧАСТЯМ ===
+def send_long_message(chat_id, text):
+    # Лимит Telegram: 4096 символов на сообщение. Делаем с запасом 4000.
+    limit = 4000
+    if len(text) <= limit:
+        bot.send_message(chat_id, text)
+        return
+    
+    # Разбиваем текст на куски по limit символов
+    for i in range(0, len(text), limit):
+        chunk = text[i:i+limit]
+        # Если кусок не последний — можно добавить индикатор, но для атмосферы лучше просто отправлять подряд
+        bot.send_message(chat_id, chunk)
 
 # === ГЕНЕРАЦИЯ СЦЕНЫ ЧЕРЕЗ ИИ ===
 def generate_scene(state):
@@ -46,7 +61,7 @@ def generate_scene(state):
                 {"role": "system", "content": "Пиши кратко, атмосферно, 1–2 предложения. На русском."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=100,
+            max_tokens=300,      # Чуть больше, чем раньше
             temperature=0.7
         )
         return response.choices[0].message.content.strip()
@@ -58,7 +73,7 @@ def chat_with_ai(user_text, state):
     system_prompt = (
         "Ты Dungeon Master в мрачном фэнтези-подземелье. "
         "Отвечай коротко, атмосферно, на русском. "
-        f"HP героя: {state['hp']}. Факел: {'есть' if state['has_torch'] else 'нет'}. "
+        f"HP героя: {state['hp']}/10. Факел: {'есть' if state['has_torch'] else 'нет'}. "
         f"Ранен: {'да' if state['is_wounded'] else 'нет'}. "
         f"Шагов: {state['steps']}."
     )
@@ -69,7 +84,7 @@ def chat_with_ai(user_text, state):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text}
             ],
-            max_tokens=150,
+            max_tokens=500,      # Увеличили лимит
             temperature=0.8
         )
         return response.choices[0].message.content.strip()
@@ -86,12 +101,12 @@ def send_welcome(message):
     state["is_wounded"] = False
     state["steps"] = 0
     scene = generate_scene(state)
-    bot.reply_to(
-        message,
+    reply = (
         f"🎭 {scene}\n\n"
         f"❤️ HP: {state['hp']}/10\n"
         "Команды: «вперёд», «кубик», «факел» — или просто напиши, что хочешь сделать."
     )
+    send_long_message(message.chat.id, reply)
 
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
@@ -101,7 +116,6 @@ def handle_all(message):
 
     if text == "вперёд":
         state["steps"] += 1
-        # Случайное событие
         roll = random.randint(1, 20)
         if roll <= 5:
             state["hp"] -= 1
@@ -119,7 +133,7 @@ def handle_all(message):
         if event:
             reply += f"\n⚡️ {event}"
         reply += f"\n❤️ HP: {state['hp']}/10"
-        bot.reply_to(message, reply)
+        send_long_message(chat_id, reply)
 
     elif text in ("кубик", "d20", "dice"):
         bot.reply_to(message, f"🎲 d20: {random.randint(1, 20)}")
@@ -134,7 +148,7 @@ def handle_all(message):
     else:
         # Любой другой текст — отправляем в ИИ как действие игрока
         reply = chat_with_ai(message.text, state)
-        bot.reply_to(message, reply)
+        send_long_message(chat_id, reply)
 
 print("Бот запущен и готов к приключениям!")
 bot.polling(none_stop=True)
