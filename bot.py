@@ -14,7 +14,7 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "llama3-8b-8192"
 
 # === СОСТОЯНИЕ ИГРОКОВ ===
 player_state = {}
