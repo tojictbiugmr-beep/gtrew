@@ -3,9 +3,10 @@ import os
 import random
 from openai import OpenAI
 from memory import (
-    load_state, save_state, add_to_history, add_world_event,
-    set_world_fact, build_memory_context, maybe_summarize, reset_state, CLASS_STATS
+    load_state, save_state, add_to_history,
+    build_memory_context, maybe_summarize, reset_state, CLASS_STATS
 )
+from dice import check_action, format_roll_result, roll_d20
 
 # === КЛЮЧИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -43,22 +44,28 @@ def send_long_message(chat_id, text):
         chunk = text[i:i+limit]
         bot.send_message(chat_id, chunk)
 
+# === ХЕЛПЕР СТАТУСА ===
+def build_status(state):
+    return (
+        f"HP: {state['hp']}/{state['max_hp']}, факел: {'есть' if state['has_torch'] else 'нет'}, "
+        f"ранен: {'да' if state['is_wounded'] else 'нет'}, шагов: {state['steps']}."
+    )
+
 # === ПРОМПТ МАСТЕРА ===
 SYSTEM_PROMPT = (
     "Ты - Dungeon Master мрачного фэнтези. Веди сюжет к ключевым точкам, "
     "но не лишай игрока свободы. Используй принцип 'Да, но...' или 'Нет, и...'. "
     "Каждое случайное событие должно быть связано с глобальным лором. "
     "Пиши атмосферно, на русском, без списков и маркеров. Только живой текст. "
-    "Используй факты из памяти и НАВЫКИ героя для поддержания непрерывности мира."
+    "Используй факты из памяти и НАВЫКИ героя для поддержания непрерывности мира. "
+    "Если игроку был показан результат броска кубика, учитывай его в описании: "
+    "успех — действие удалось, неудача — действие провалилось с последствиями."
 )
 
 # === ГЕНЕРАЦИЯ СЦЕНЫ ===
 def generate_scene(state):
     memory = build_memory_context(state)
-    status = (
-        f"HP: {state['hp']}/{state['max_hp']}, факел: {'есть' if state['has_torch'] else 'нет'}, "
-        f"ранен: {'да' if state['is_wounded'] else 'нет'}, шагов: {state['steps']}."
-    )
+    status = build_status(state)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "system", "content": f"Контекст памяти:\n{memory}"},
@@ -80,10 +87,7 @@ def generate_scene(state):
 # === СВОБОДНЫЙ РАЗГОВОР С ИИ ===
 def chat_with_ai(user_text, state):
     memory = build_memory_context(state)
-    status = (
-        f"HP: {state['hp']}/{state['max_hp']}, факел: {'есть' if state['has_torch'] else 'нет'}, "
-        f"ранен: {'да' if state['is_wounded'] else 'нет'}, шагов: {state['steps']}."
-    )
+    status = build_status(state)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "system", "content": f"Контекст памяти:\n{memory}"}
@@ -108,58 +112,6 @@ def chat_with_ai(user_text, state):
         return reply
     except Exception as e:
         return f"Голос подземелья молчит... (ошибка: {e})"
-
-# === МЕХАНИКА БРОСКА D20 И НАВЫКОВ ===
-
-def calculate_bonus(state, skill_type):
-    """Бонус = навык героя (отклонение от 10) + ситуативные модификаторы из фактов мира."""
-    bonus = 0
-    skills = state.get("skills", {})
-    
-    # Базовый бонус: насколько навык отличается от среднего значения 10
-    if skill_type in skills:
-        bonus += skills[skill_type] - 10
-
-    # Ситуативные модификаторы (факты мира)
-    facts = state.get("world_facts", {})
-
-    if skill_type == "знание":
-        if "Древний_пергамент" in facts:
-            bonus += 2
-        if "Кристалл_холодный_свет" in facts:
-            bonus += 1
-
-    elif skill_type == "ловкость":
-        if "Холодный_ветер_в_зале" in facts:
-            bonus -= 1
-
-    return bonus
-
-def roll_d20(state, skill_type="обычный"):
-    roll = random.randint(1, 20)
-    bonus = calculate_bonus(state, skill_type) if skill_type != "обычный" else 0
-    total = roll + bonus
-
-    result_type = ""
-    description = ""
-
-    if roll == 20:
-        result_type = "КРИТИЧЕСКИЙ УСПЕХ"
-        description = "Судьба благоволит тебе: даже если обстоятельства против, твой поступок выходит за рамки обычного."
-    elif roll == 1:
-        result_type = "КРИТИЧЕСКАЯ НЕУДАЧА"
-        description = "Всё идёт не так: ты теряешь равновесие, инструмент ломается, или звук разносится по коридору, привлекая внимание."
-    elif total >= 15:
-        result_type = "УСПЕХ"
-        description = "Тебе удаётся задуманное, хотя и не без усилий."
-    elif total >= 10:
-        result_type = "ПОГРАНИЧНЫЙ РЕЗУЛЬТАТ"
-        description = "Ты почти справляешься, но что-то идёт не совсем так, как хотелось."
-    else:
-        result_type = "НЕУДАЧА"
-        description = "К сожалению, попытка не удалась. Возможно, стоит попробовать другой подход."
-
-    return roll, bonus, total, result_type, description
 
 # === ОБРАБОТЧИКИ ===
 
@@ -200,7 +152,7 @@ def set_class(message):
         f"Ты выбрал класс: {class_name}.\n\n"
         f"Твои базовые характеристики: {', '.join([f'{k}: {v}' for k, v in base_stats.items()])}\n"
         f"У тебя есть {state['skill_points_remaining']} очков, чтобы усилить навыки.\n\n"
-        "Используй команду /прокачка сила +2, /прокачка ловкость -1 и т. д., чтобы менять значения.\n"
+        "Используй команду /прокачка сила +2, /прокачка ловкость -1 и т. д., чтобы менять значения.\n"
         "Помни: нельзя тратить больше очков, чем у тебя есть, и нельзя опускать навык ниже 6."
     )
     send_long_message(chat_id, reply)
@@ -261,24 +213,16 @@ def upgrade_skill(message):
     send_long_message(chat_id, reply)
     save_chat(chat_id)
 
-
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
     chat_id = message.chat.id
     state = get_state(chat_id)
     text = message.text.lower().strip()
 
-    # --- БРОСКИ КУБИКА ---
+    # --- БРОСКИ КУБИКА (ручные) ---
     if text in ("кубик", "d20", "dice"):
-        roll, bonus, total, res_type, desc = roll_d20(state, "обычный")
-        reply = (
-            f"🎲 Бросок d20: {roll}\n"
-            f"Бонус: 0\n"
-            f"Итого: {total}\n"
-            f"Результат: {res_type}\n"
-            f"{desc}"
-        )
-        send_long_message(chat_id, reply)
+        result = roll_d20(state, "обычный")
+        send_long_message(chat_id, format_roll_result(result))
         save_chat(chat_id)
         return
 
@@ -286,15 +230,8 @@ def handle_all(message):
         parts = text.split()
         if len(parts) >= 2:
             skill = parts[1]
-            roll, bonus, total, res_type, desc = roll_d20(state, skill)
-            reply = (
-                f"🎲 Бросок d20 ({skill}): {roll}\n"
-                f"Бонус (навык + факты): {bonus}\n"
-                f"Итого: {total}\n"
-                f"Результат: {res_type}\n"
-                f"{desc}"
-            )
-            send_long_message(chat_id, reply)
+            result = roll_d20(state, skill)
+            send_long_message(chat_id, format_roll_result(result))
             save_chat(chat_id)
             return
 
@@ -323,9 +260,9 @@ def handle_all(message):
     elif text in ("факел", "свет"):
         if not state["has_torch"]:
             state["has_torch"] = True
-            bot.reply_to(message, "Ты зажёг факел. Пламя дрожит от сквозняка.")
+            send_long_message(chat_id, "Ты зажёг факел. Пламя дрожит от сквозняка.")
         else:
-            bot.reply_to(message, "Факел уже горит.")
+            send_long_message(chat_id, "Факел уже горит.")
         save_chat(chat_id)
 
     elif text == "память":
@@ -353,9 +290,20 @@ def handle_all(message):
         save_chat(chat_id)
 
     else:
-        # Обычный ход игрока
-        reply = chat_with_ai(message.text, state)
-        send_long_message(chat_id, reply)
+        # --- ОБЫЧНЫЙ ХОД С АВТОПРОВЕРКОЙ КУБИКА ---
+        result = check_action(message.text, state, client)
+        if result is not None:
+            roll_text = format_roll_result(result)
+            modified_text = (
+                f"{message.text} "
+                f"[Бросок: {result['total']} vs сложность {result['difficulty']} — "
+                f"{result['result_type']}. {result['reason']}]"
+            )
+            reply = chat_with_ai(modified_text, state)
+            send_long_message(chat_id, roll_text + "\n\n" + reply)
+        else:
+            reply = chat_with_ai(message.text, state)
+            send_long_message(chat_id, reply)
         save_chat(chat_id)
 
 print("Бот запущен и готов к приключениям!")
