@@ -3,7 +3,7 @@ import os
 import random
 from openai import OpenAI
 
-# === КЛЮЧИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===
+# === КЛЮЧИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -14,7 +14,8 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-MODEL = "llama-3.1-8b-instant"
+# === РАБОЧАЯ МОДЕЛЬ ИЗ ТВОЕГО СПИСКА ===
+MODEL = "groq/compound-mini"
 
 # === СОСТОЯНИЕ ИГРОКОВ ===
 player_state = {}
@@ -39,56 +40,29 @@ def send_long_message(chat_id, text):
         chunk = text[i:i+limit]
         bot.send_message(chat_id, chunk)
 
-# === СИСТЕМНЫЙ ПРОМПТ ДЛЯ МАСТЕРА ===
-SYSTEM_PROMPT = """Ты - высокоуровневый Игровой Режиссер (Game Director) в системе динамического повествования. Твоя задача - управлять балансом между абсолютной свободой действий игрока и неизбежным движением к ключевым точкам сюжета (Milestones).
-
-OPERATING MODES:
-
-1. AMBIENT MODE (Режим Мира):
-- Активация: Когда действия игрока не ведут к выполнению текущей сюжетной цели или направлены на бытовую деятельность/исследование.
-- Задача: Поддерживать иллюзию живого мира. Генерировать детали окружения, реакцию NPC на мелочи, изменения погоды, случайные мелкие события.
-- Принцип: "Мир живет сам по себе". Не пытайся навязывать сюжет. Будь детальным, но не навязчивым.
-
-2. PLOT MODE (Режим Сюжета):
-- Активация: Когда игрок приближается к Milestone, совершает значимое действие или когда уровень Сюжетного Напряжения достигает порога.
-- Задача: Направлять игрока к ключевым точкам сценария.
-- Механики управления:
-  - Narrative Echo (Сюжетное эхо): Если игрок отклоняется от сюжета, интегрируй сюжет в его отклонение.
-  - Friction (Трение): Если игрок активно сопротивляется сюжету, увеличивай трение в мире (препятствия, сложности, потери ресурсов), делая отклонение неудобным.
-  - Milestone Injection: Прямая активация событий при достижении условий.
-
-CORE LOGIC & CONSTRAINTS:
-
-- Anti-Drift: Каждое событие, даже самое случайное, должно иметь потенциальную связь с глобальным Лором или текущей целью.
-- Принцип "Да, но..." / "Нет, и...":
-  - Если игрок делает что-то полезное для сюжета: "Да, это произошло, И К ТОМУ ЖЕ [сюжетное событие]".
-  - Если игрок делает что-то деструктивное для сюжета: "Нет, это не сработало так просто, И ВМЕСТО ЭТОГО [сюжетное препятствие]".
-- Иерархия приоритетов: Global Milestones > Character Arc > Player Agency > Ambient Details.
-
-INPUT DATA STRUCTURE:
-При каждом ответе анализируй входящие данные по следующим параметрам:
-- Current Milestone Status: [Название цели / Прогресс %]
-- Player Intent: [Что игрок пытается сделать на самом деле]
-- Active Mode: [Ambient OR Plot]
-
-Все ответы на русском языке. Отвечай атмосферно, ёмко, без перечисления вариантов действий."""
+# === ПРОМПТ (компактный, чтобы влез в лимиты) ===
+SYSTEM_PROMPT = (
+    "Ты — Dungeon Master мрачного фэнтези. Веди сюжет к ключевым точкам, "
+    "но не лишай игрока свободы. Используй принцип 'Да, но...' или 'Нет, и...': "
+    "если действие помогает сюжету — добавь сюжетное событие; если мешает — создай препятствие. "
+    "Каждое случайное событие должно быть связано с глобальным лором. "
+    "Пиши атмосферно, на русском, без списков и маркеров. Только живой текст."
+)
 
 # === ГЕНЕРАЦИЯ СЦЕНЫ ===
 def generate_scene(state):
     context = (
-        f"Состояние героя: HP {state['hp']}/10, "
-        f"факел: {'есть' if state['has_torch'] else 'нет'}, "
-        f"ранен: {'да' if state['is_wounded'] else 'нет'}, "
-        f"шагов в подземелье: {state['steps']}."
+        f"HP: {state['hp']}/10, факел: {'есть' if state['has_torch'] else 'нет'}, "
+        f"ранен: {'да' if state['is_wounded'] else 'нет'}, шагов: {state['steps']}."
     )
     try:
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Сгенерируй короткую сцену (1-2 предложения). {context}"}
+                {"role": "user", "content": f"Опиши сцену в 1-2 предложениях. Контекст: {context}"}
             ],
-            max_tokens=300,
+            max_tokens=500,
             temperature=0.7
         )
         return response.choices[0].message.content.strip()
@@ -98,19 +72,17 @@ def generate_scene(state):
 # === СВОБОДНЫЙ РАЗГОВОР С ИИ ===
 def chat_with_ai(user_text, state):
     context = (
-        f"Состояние героя: HP {state['hp']}/10, "
-        f"факел: {'есть' if state['has_torch'] else 'нет'}, "
-        f"ранен: {'да' if state['is_wounded'] else 'нет'}, "
-        f"шагов: {state['steps']}."
+        f"HP: {state['hp']}/10, факел: {'есть' if state['has_torch'] else 'нет'}, "
+        f"ранен: {'да' if state['is_wounded'] else 'нет'}, шагов: {state['steps']}."
     )
     try:
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Действие игрока: {user_text}\n\n{context}"}
+                {"role": "user", "content": f"Игрок делает: {user_text}. Контекст: {context}"}
             ],
-            max_tokens=500,
+            max_tokens=800,
             temperature=0.8
         )
         return response.choices[0].message.content.strip()
@@ -128,9 +100,9 @@ def send_welcome(message):
     state["steps"] = 0
     scene = generate_scene(state)
     reply = (
-        f"🎭 {scene}\n\n"
-        f"❤️ HP: {state['hp']}/10\n"
-        "Команды: «вперёд», «кубик», «факел» - или просто напиши, что хочешь сделать."
+        f"{scene}\n\n"
+        f"HP: {state['hp']}/10\n"
+        "Команды: вперёд, кубик, факел - или просто напиши, что хочешь сделать."
     )
     send_long_message(message.chat.id, reply)
 
@@ -157,17 +129,17 @@ def handle_all(message):
         scene = generate_scene(state)
         reply = scene
         if event:
-            reply += f"\n⚡️ {event}"
-        reply += f"\n❤️ HP: {state['hp']}/10"
+            reply += f"\n{event}"
+        reply += f"\nHP: {state['hp']}/10"
         send_long_message(chat_id, reply)
 
     elif text in ("кубик", "d20", "dice"):
-        bot.reply_to(message, f"🎲 d20: {random.randint(1, 20)}")
+        bot.reply_to(message, f"d20: {random.randint(1, 20)}")
 
     elif text == "факел":
         if not state["has_torch"]:
             state["has_torch"] = True
-            bot.reply_to(message, "🔥 Ты зажёг факел. Пламя дрожит от сквозняка.")
+            bot.reply_to(message, "Ты зажёг факел. Пламя дрожит от сквозняка.")
         else:
             bot.reply_to(message, "Факел уже горит.")
 
