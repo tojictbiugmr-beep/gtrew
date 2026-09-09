@@ -117,16 +117,19 @@ def chat_with_ai(user_text, state):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     chat_id = message.chat.id
+    # reset_state уже делает load/create/save — просто берём результат
     state = reset_state(chat_id)
-    player_state[chat_id] = state
+    player_state[chat_id] = state  # кладём в кэш
+
     scene = generate_scene(state)
     reply = (
         f"{scene}\n\n"
         f"HP: {state['hp']}/{state['max_hp']}\n"
-        "Команды: вперёд, кубик, факел, память - или просто напиши, что хочешь сделать."
+        "Команды: вперёд, кубик, факел, память — или просто напиши, что хочешь сделать."
     )
     send_long_message(chat_id, reply)
-    save_chat(chat_id)
+    save_chat(chat_id)  # сохраняем ещё раз после генерации сцены
+
 
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
