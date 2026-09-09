@@ -14,7 +14,7 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-MODEL = "openai/gpt-oss-20b"
+MODEL = "llama-3.1-8b-instant"
 
 # === СОСТОЯНИЕ ИГРОКОВ ===
 player_state = {}
