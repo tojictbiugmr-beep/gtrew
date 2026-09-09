@@ -8,12 +8,16 @@ RECENT_HISTORY_LIMIT = 6
 WORLD_LOG_LIMIT = 15
 SUMMARY_MAX_CHARS = 600
 SUMMARY_EVERY_TURNS = 8
-SKILL_POINTS_START = 5  # Сколько очков даётся на старте для прокачки
+SKILL_POINTS_START = 5
 
+CLASS_STATS = {
+    "воин": {"сила": 14, "выносливость": 14, "ловкость": 10, "знание": 8, "восприятие": 10},
+    "маг": {"сила": 8, "выносливость": 10, "ловкость": 10, "знание": 14, "восприятие": 12},
+    "разбойник": {"сила": 10, "выносливость": 10, "ловкость": 14, "знание": 10, "восприятие": 14},
+}
 
 def _path(chat_id):
     return os.path.join(MEMORY_DIR, f"{chat_id}.json")
-
 
 def _save(chat_id, data):
     path = _path(chat_id)
@@ -23,7 +27,6 @@ def _save(chat_id, data):
         print(f"[memory] Сохранено: {path}")
     except Exception as e:
         print(f"[memory] Ошибка сохранения: {e}")
-
 
 def _load(chat_id):
     path = _path(chat_id)
@@ -38,7 +41,6 @@ def _load(chat_id):
     except Exception as e:
         print(f"[memory] Ошибка загрузки: {e}")
         return None
-
 
 def default_state():
     return {
@@ -57,9 +59,8 @@ def default_state():
         "world_log": [],
         "world_facts": {},
         "story_summary": "",
-        # --- НОВЫЕ ПОЛЯ: КЛАСС И НАВЫКИ ---
         "class_name": None,
-        "skill_points_remaining": 0,
+        "skill_points_remaining": SKILL_POINTS_START,
         "skills": {
             "сила": 10,
             "ловкость": 10,
@@ -68,7 +69,6 @@ def default_state():
             "восприятие": 10
         }
     }
-
 
 def load_state(chat_id):
     data = _load(chat_id)
@@ -80,10 +80,8 @@ def load_state(chat_id):
         return data
     return default_state()
 
-
 def save_state(chat_id, state):
     _save(chat_id, state)
-
 
 def add_to_history(state, role, text):
     state["chat_history"].append({"role": role, "content": text})
@@ -94,44 +92,34 @@ def add_to_history(state, role, text):
         else:
             add_world_event(state, f"Мастер: {old['content'][:80]}")
 
-
 def add_world_event(state, event_text):
     state["world_log"].append(event_text)
     if len(state["world_log"]) > WORLD_LOG_LIMIT:
         state["world_log"] = state["world_log"][-WORLD_LOG_LIMIT:]
 
-
 def set_world_fact(state, key, value):
     state["world_facts"][key] = value
-
 
 def update_world_fact(state, key, value):
     state["world_facts"][key] = value
 
-
 def remove_world_fact(state, key):
     state["world_facts"].pop(key, None)
 
-
 def build_memory_context(state):
     parts = []
-
     facts = state.get("world_facts", {})
     if facts:
         facts_str = "\n".join([f"- {k}: {v}" for k, v in facts.items()])
-        parts.append(f"ФАКТЫ МИРА (неизменные):\n{facts_str}")
-
+        parts.append(f"ФАКТЫ МИРА:\n{facts_str}")
     summary = state.get("story_summary", "")
     if summary:
         parts.append(f"СВОДКА СЮЖЕТА:\n{summary}")
-
     log = state.get("world_log", [])
     if log:
         recent = log[-5:]
         parts.append(f"НЕДАВНИЕ СОБЫТИЯ:\n" + " | ".join(recent))
-
     parts.append(f"ЛОКАЦИЯ: {state.get('location', 'неизвестно')}")
-
     history = state.get("chat_history", [])
     if history:
         hist_str = "\n".join(
@@ -139,39 +127,28 @@ def build_memory_context(state):
              for h in history]
         )
         parts.append(f"ПОСЛЕДНИЙ ДИАЛОГ:\n{hist_str}")
-
-    # Добавим навыки в контекст, чтобы мастер мог на них опираться
     skills = state.get("skills", {})
     skills_str = ", ".join([f"{k}: {v}" for k, v in skills.items()])
     parts.append(f"НАВЫКИ ГЕРОЯ: {skills_str}")
-
     return "\n\n".join(parts)
-
 
 def extract_facts(state, client, model):
     log = state.get("world_log", [])
     history = state.get("chat_history", [])
     existing_facts = state.get("world_facts", {})
-
     recent_events = " | ".join(log[-10:]) if log else ""
     recent_dialog = "\n".join(
         [f"{'И' if h['role'] == 'user' else 'М'}: {h['content'][:150]}"
          for h in history]
     ) if history else ""
+    existing_str = "; ".join([f"{k}: {v}" for k, v in existing_facts.items()])
 
     if not recent_events and not recent_dialog:
         return
 
-    existing_str = "; ".join([f"{k}: {v}" for k, v in existing_facts.items()])
-
     prompt = (
-        "Ты - архивариус игрового мира. Изучи события и извлеки ТОЛЬКО новые "
-        "устойчивые факты: имена NPC, названия мест, найденные предметы, "
-        "состояния мира, договорённости, ключевые решения игрока. "
-        "НЕ выдумывай факты, которых нет в тексте. "
-        "НЕ дублируй уже известные. "
-        "Формат ответа - строго JSON-объект: {\"Ключ\": \"Значение\"}. "
-        "Если новых фактов нет - верни: {}.\n\n"
+        "Ты - архивариус игрового мира. Извлеки ТОЛЬКО новые устойчивые факты: имена NPC, места, предметы, договорённости, ключевые решения. "
+        "НЕ выдумывай. НЕ дублируй уже известные. Формат — JSON-объект {\"Ключ\": \"Значение\"}. Если новых нет — верни {}.\n\n"
         f"УЖЕ ИЗВЕСТНЫЕ ФАКТЫ:\n{existing_str}\n\n"
         f"СОБЫТИЯ:\n{recent_events}\n{recent_dialog}\n\n"
         "НОВЫЕ ФАКТЫ (JSON):"
@@ -195,35 +172,26 @@ def extract_facts(state, client, model):
     except Exception:
         pass
 
-
 def maybe_summarize(state, client, model):
     if state["turn_count"] % SUMMARY_EVERY_TURNS != 0 or state["turn_count"] == 0:
         return
-
     log = state.get("world_log", [])
     if len(log) < 5:
         return
-
     extract_facts(state, client, model)
-
     old_summary = state.get("story_summary", "")
     recent_events = " | ".join(log[-10:])
     history_str = "\n".join(
         [f"{'И' if h['role'] == 'user' else 'М'}: {h['content'][:150]}"
          for h in state.get("chat_history", [])]
     )
-
     prompt = (
-        "Ты - архивариус. Сожми историю приключения в ОДИН компактный абзац "
-        "(до 500 символов). Опиши ТЕКУЩУЮ ситуацию и недавние события. "
-        "НЕ перечисляй факты о мире (имена, места, предметы) - они хранятся отдельно. "
-        "Сосредоточься на том, что ПРОИСХОДИТ сейчас и куда движется сюжет. "
-        "Пиши на русском.\n\n"
+        "Сожми историю приключения в ОДИН абзац (до 500 символов). Опиши ТЕКУЩУЮ ситуацию и куда движется сюжет. "
+        "Не перечисляй факты о мире отдельно. Пиши на русском.\n\n"
         f"ПРЕДЫДУЩАЯ СВОДКА:\n{old_summary}\n\n"
         f"НОВЫЕ СОБЫТИЯ:\n{recent_events}\n{history_str}\n\n"
         "НОВАЯ СВОДКА:"
     )
-
     try:
         response = client.chat.completions.create(
             model=model,
@@ -240,17 +208,13 @@ def maybe_summarize(state, client, model):
     except Exception:
         pass
 
-
 def reset_state(chat_id):
     path = _path(chat_id)
     if os.path.exists(path):
         os.remove(path)
-
     state = default_state()
     set_world_fact(state, "Подземелье", "древние руины под заброшенным замком")
     set_world_fact(state, "Цель", "найти источник тьмы в глубинах")
     add_world_event(state, "Герой вошёл в подземелье")
-
     _save(chat_id, state)
     return state
-    
