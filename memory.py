@@ -218,12 +218,18 @@ def maybe_summarize(state, client, model):
 
 def reset_state(chat_id):
     path = _path(chat_id)
+    # Удаляем старый файл, чтобы начать с чистого листа
     if os.path.exists(path):
         os.remove(path)
+
     state = default_state()
-    add_world_event(state, "Герой вошёл в подземелье")
+    # Сначала добавляем факты
     set_world_fact(state, "Подземелье", "древние руины под заброшенным замком")
     set_world_fact(state, "Цель", "найти источник тьмы в глубинах")
-    save_state(chat_id, state)
+    # Потом добавляем стартовое событие
+    add_world_event(state, "Герой вошёл в подземелье")
+
+    # И только после этого сохраняем
+    _save(chat_id, state)
     return state
-  
+    
