@@ -8,6 +8,7 @@ RECENT_HISTORY_LIMIT = 6
 WORLD_LOG_LIMIT = 15
 SUMMARY_MAX_CHARS = 600
 SUMMARY_EVERY_TURNS = 8
+SKILL_POINTS_START = 5  # Сколько очков даётся на старте для прокачки
 
 
 def _path(chat_id):
@@ -15,18 +16,27 @@ def _path(chat_id):
 
 
 def _save(chat_id, data):
-    with open(_path(chat_id), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    path = _path(chat_id)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"[memory] Сохранено: {path}")
+    except Exception as e:
+        print(f"[memory] Ошибка сохранения: {e}")
 
 
 def _load(chat_id):
     path = _path(chat_id)
     if not os.path.exists(path):
+        print(f"[memory] Файл не найден: {path}")
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            data = json.load(f)
+        print(f"[memory] Загружено: {path}, facts={len(data.get('world_facts', {}))}")
+        return data
+    except Exception as e:
+        print(f"[memory] Ошибка загрузки: {e}")
         return None
 
 
@@ -47,6 +57,16 @@ def default_state():
         "world_log": [],
         "world_facts": {},
         "story_summary": "",
+        # --- НОВЫЕ ПОЛЯ: КЛАСС И НАВЫКИ ---
+        "class_name": None,
+        "skill_points_remaining": 0,
+        "skills": {
+            "сила": 10,
+            "ловкость": 10,
+            "выносливость": 10,
+            "знание": 10,
+            "восприятие": 10
+        }
     }
 
 
@@ -119,6 +139,11 @@ def build_memory_context(state):
              for h in history]
         )
         parts.append(f"ПОСЛЕДНИЙ ДИАЛОГ:\n{hist_str}")
+
+    # Добавим навыки в контекст, чтобы мастер мог на них опираться
+    skills = state.get("skills", {})
+    skills_str = ", ".join([f"{k}: {v}" for k, v in skills.items()])
+    parts.append(f"НАВЫКИ ГЕРОЯ: {skills_str}")
 
     return "\n\n".join(parts)
 
@@ -218,18 +243,14 @@ def maybe_summarize(state, client, model):
 
 def reset_state(chat_id):
     path = _path(chat_id)
-    # Удаляем старый файл, чтобы начать с чистого листа
     if os.path.exists(path):
         os.remove(path)
 
     state = default_state()
-    # Сначала добавляем факты
     set_world_fact(state, "Подземелье", "древние руины под заброшенным замком")
     set_world_fact(state, "Цель", "найти источник тьмы в глубинах")
-    # Потом добавляем стартовое событие
     add_world_event(state, "Герой вошёл в подземелье")
 
-    # И только после этого сохраняем
     _save(chat_id, state)
     return state
     
