@@ -102,5 +102,4 @@ def echo_all(message):
         bot.reply_to(message, "Команды: «вперёд», «кубик», «факел».")
 
 print("Бот с Groq запущен...")
-bot.polling(non
-            e_stop=True)
+bot.polling(none_stop=True)
